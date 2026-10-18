@@ -58,7 +58,7 @@ function setClock(room: Room) {
   broadcast(room);
 }
 function autoMove(room: Room) {
-  if(room.status!=='playing'||!room.state) return;
+  if(room.status!=='playing'||!room.state||room.seats.some(seat=>!seat?.socketId)) return;
   const candidates = legalMoves(room.state); if(!candidates.length) return;
   room.state = applyAction(room.state, { type:'move', to: candidates[Math.floor(Math.random()*candidates.length)] });
   io.to(room.code).emit('notice', 'Turn timer expired. A legal move was played.'); setClock(room);
@@ -113,7 +113,7 @@ io.on('connection', socket=>{
     }
     const seat=room.seats[seatIndex]!;
     if(seat.socketId && seat.socketId!==socket.id) io.sockets.sockets.get(seat.socketId)?.disconnect(true);
-    seat.socketId=socket.id;seat.disconnectedAt=null;socket.join(room.code);if(room.grace[seatIndex])clearTimeout(room.grace[seatIndex]!);room.grace[seatIndex]=null;
+    seat.socketId=socket.id;seat.disconnectedAt=null;socket.join(room.code);if(room.grace[seatIndex])clearTimeout(room.grace[seatIndex]!);room.grace[seatIndex]=null;if(room.status==='playing'&&room.timer&&room.seats.every(s=>s?.socketId))room.deadline=Date.now()+room.timer*1000;
     ack(cb,{ok:true,code:room.code,seat:seatIndex,token:seat.token,room:view(room)});broadcast(room);
   });
   socket.on('leave_room',(input,cb)=>{
