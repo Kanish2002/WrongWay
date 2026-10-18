@@ -90,7 +90,7 @@ The server never accepts a complete game state from a client. Actions are parsed
 
 Use a persistent Node service, not a serverless function. Root directory: repository root.
 
-- Build command: `npm ci && npm run build -w @wrongway/rules && npm run build -w @wrongway/server`
+- Build command: `npm install --no-audit --no-fund && npm run build -w @wrongway/rules && npm run build -w @wrongway/server`
 - Start command: `npm run start -w @wrongway/server`
 - Environment: `NODE_ENV=production`, `PORT` (platform assigns it), `CLIENT_ORIGIN=https://YOUR-CLIENT.vercel.app`
 - Health endpoint: `/health`
@@ -100,7 +100,7 @@ Use a persistent Node service, not a serverless function. Root directory: reposi
 
 - Framework: Vite
 - Root directory: `apps/web` if deploying directly with a separate build step, or use repository root and output `apps/web/dist`.
-- Recommended monorepo build command (from root): `npm ci && npm run build -w @wrongway/rules && npm run build -w @wrongway/web`
+- Recommended monorepo build command (from root): `npm install --no-audit --no-fund && npm run build -w @wrongway/rules && npm run build -w @wrongway/web`
 - Output directory: `apps/web/dist`
 - Set `VITE_SERVER_URL=https://YOUR-SERVER.onrender.com` at **build time**. Also set server `CLIENT_ORIGIN` to the exact deployed frontend origin, without trailing slash.
 - For Netlify, add an SPA rewrite (`/* /index.html 200`); Vercel provides Vite SPA fallback, or use `vercel.json` for rewrites if needed.
