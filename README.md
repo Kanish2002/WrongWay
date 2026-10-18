@@ -14,7 +14,6 @@
 ```bash
 npm install
 npm run build -w @wrongway/rules
-cp apps/web/.env.example apps/web/.env  # optional for dev: defaults to same-origin Vite proxy
 npm run dev
 ```
 
