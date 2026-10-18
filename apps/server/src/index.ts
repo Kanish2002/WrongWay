@@ -16,12 +16,11 @@ const PORT = Number(process.env.PORT || 3001);
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_SIZE = 6;
 const IDLE_MS = 30 * 60_000;
-const RECONNECT_MS = 60_000;
 const DISCONNECT_GRACE = 60_000;
 
 type Seat = { token: string; name: string; socketId: string | null; ready: boolean; disconnectedAt: number | null };
 type Status = 'lobby' | 'countdown' | 'playing' | 'finished';
-type Room = { code: string; seats: [Seat, Seat?]; status: Status; hostFirst: boolean; timer: 0|30|60; deadline: number | null; state: GameState | null; created: number; touched: number; countdown?: NodeJS.Timeout; tick?: NodeJS.Timeout; grace?: NodeJS.Timeout; rematch: Set<number> };
+type Room = { code: string; seats: [Seat, Seat?]; status: Status; hostFirst: boolean; timer: 0|30|60; deadline: number | null; state: GameState | null; created: number; touched: number; countdown?: NodeJS.Timeout; tick?: NodeJS.Timeout; grace: [NodeJS.Timeout | null, NodeJS.Timeout | null]; drawOfferedBy: number | null; rematch: Set<number> };
 const rooms = new Map<string, Room>();
 const lastCall = new Map<string, { t: number; count: number }>();
 const nameSchema = z.string().trim().max(28).optional();
@@ -51,7 +50,7 @@ function end(room: Room, winnerId: string | null, reason: string) {
   if(room.status==='finished') return;
   room.status='finished'; room.deadline=null;
   if(room.state) room.state = { ...room.state, winner: winnerId };
-  clearInterval(room.tick); clearTimeout(room.grace); io.to(room.code).emit('game_over', { winnerId, reason }); broadcast(room);
+  clearInterval(room.tick); room.grace.forEach(timer=>{if(timer) clearTimeout(timer)}); room.grace=[null,null]; room.drawOfferedBy=null; io.to(room.code).emit('game_over', { winnerId, reason }); broadcast(room);
 }
 function setClock(room: Room) {
   room.deadline = room.timer ? Date.now() + room.timer*1000 : null;
@@ -59,7 +58,7 @@ function setClock(room: Room) {
   broadcast(room);
 }
 function autoMove(room: Room) {
-  if(room.status!=='playing'||!room.state) return;
+  if(room.status!=='playing'||!room.state||room.seats.some(seat=>!seat?.socketId)) return;
   const candidates = legalMoves(room.state); if(!candidates.length) return;
   room.state = applyAction(room.state, { type:'move', to: candidates[Math.floor(Math.random()*candidates.length)] });
   io.to(room.code).emit('notice', 'Turn timer expired. A legal move was played.'); setClock(room);
@@ -77,10 +76,11 @@ function start(room: Room) {
   },3200);
 }
 function expireDisconnected(room: Room, seatIndex: number) {
-  clearTimeout(room.grace);
-  room.grace=setTimeout(()=>{
+  if(room.grace[seatIndex])clearTimeout(room.grace[seatIndex]!);
+  room.grace[seatIndex]=setTimeout(()=>{
     const seat=room.seats[seatIndex];
     if(seat && !seat.socketId && room.status==='playing') end(room,room.state?.players[1-seatIndex]?.id ?? null,'disconnect');
+    room.grace[seatIndex]=null;
   },DISCONNECT_GRACE);
 }
 function locate(socket:Socket, data:unknown) {
@@ -97,7 +97,7 @@ io.on('connection', socket=>{
     if(!data.success) return ack(cb,{ok:false,error:'Invalid room settings'});
     let c=code(); while(rooms.has(c)) c=code();
     const seat:Seat={token:token(),name:nickname(data.data.name,'Player 1'),socketId:socket.id,ready:false,disconnectedAt:null};
-    const room:Room={code:c,seats:[seat],status:'lobby',timer:data.data.timer,hostFirst:data.data.hostFirst,deadline:null,state:null,created:Date.now(),touched:Date.now(),rematch:new Set()};
+    const room:Room={code:c,seats:[seat],status:'lobby',timer:data.data.timer,hostFirst:data.data.hostFirst,deadline:null,state:null,created:Date.now(),touched:Date.now(),grace:[null,null],drawOfferedBy:null,rematch:new Set()};
     rooms.set(c,room); socket.join(c); ack(cb,{ok:true,code:c,seat:0,token:seat.token,room:view(room)}); broadcast(room);
   });
   socket.on('join_room', (input, cb)=>{
@@ -113,7 +113,7 @@ io.on('connection', socket=>{
     }
     const seat=room.seats[seatIndex]!;
     if(seat.socketId && seat.socketId!==socket.id) io.sockets.sockets.get(seat.socketId)?.disconnect(true);
-    seat.socketId=socket.id;seat.disconnectedAt=null;socket.join(room.code);clearTimeout(room.grace);
+    seat.socketId=socket.id;seat.disconnectedAt=null;socket.join(room.code);if(room.grace[seatIndex])clearTimeout(room.grace[seatIndex]!);room.grace[seatIndex]=null;if(room.status==='playing'&&room.timer&&room.seats.every(s=>s?.socketId))room.deadline=Date.now()+room.timer*1000;
     ack(cb,{ok:true,code:room.code,seat:seatIndex,token:seat.token,room:view(room)});broadcast(room);
   });
   socket.on('leave_room',(input,cb)=>{
@@ -140,9 +140,9 @@ io.on('connection', socket=>{
     catch(e){ack(cb,{ok:false,error:(e as Error).message});}
   });
   socket.on('resign',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='playing') return ack(cb,{ok:false});end(room,room.state?.players[1-findSeat(room,socket)]?.id ?? null,'resign');ack(cb,{ok:true});});
-  socket.on('offer_draw',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='playing')return ack(cb,{ok:false});io.to(room.code).emit('draw_offer',{from:findSeat(room,socket)});ack(cb,{ok:true});});
-  socket.on('accept_draw',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='playing')return ack(cb,{ok:false});end(room,null,'draw');ack(cb,{ok:true});});
-  socket.on('rematch',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='finished')return ack(cb,{ok:false});room.rematch.add(findSeat(room,socket));if(room.rematch.size===2){room.rematch.clear();room.hostFirst=!room.hostFirst;room.status='lobby';room.state=null;room.seats.forEach(s=>{if(s)s.ready=false;});broadcast(room);}else io.to(room.code).emit('notice','Rematch requested. Waiting for your friend.');ack(cb,{ok:true});});
+  socket.on('offer_draw',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='playing')return ack(cb,{ok:false});const sender=findSeat(room,socket);room.drawOfferedBy=sender;socket.to(room.code).emit('draw_offer',{from:sender});ack(cb,{ok:true});});
+  socket.on('accept_draw',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='playing'||room.drawOfferedBy===null||room.drawOfferedBy===findSeat(room,socket))return ack(cb,{ok:false,error:'No opponent draw offer to accept'});end(room,null,'draw');ack(cb,{ok:true});});
+  socket.on('rematch',(input,cb)=>{const room=locate(socket,input);if(!room||room.status!=='finished')return ack(cb,{ok:false});room.rematch.add(findSeat(room,socket));if(room.rematch.size===2){room.rematch.clear();room.hostFirst=!room.hostFirst;room.status='lobby';room.state=null;room.drawOfferedBy=null;room.seats.forEach(s=>{if(s)s.ready=false;});broadcast(room);}else io.to(room.code).emit('notice','Rematch requested. Waiting for your friend.');ack(cb,{ok:true});});
   socket.on('reaction',(input)=>{if(throttle(socket,4,3))return;const room=locate(socket,input);const e=(input as {emoji?:unknown})?.emoji;if(room&&['🔥','👏','😮','😎','❤️','😂'].includes(String(e)))socket.to(room.code).emit('reaction',{emoji:e,from:findSeat(room,socket)});});
   socket.on('disconnect',()=>{
     for(const room of rooms.values()){
@@ -156,7 +156,7 @@ io.on('connection', socket=>{
 });
 setInterval(()=>{
   const now=Date.now();
-  for(const [code,room] of rooms) if(now-room.touched>IDLE_MS || (room.status==='finished' && now-room.touched>10*60_000)) {clearInterval(room.tick);clearTimeout(room.countdown);clearTimeout(room.grace);rooms.delete(code);}
+  for(const [code,room] of rooms) if(now-room.touched>IDLE_MS || (room.status==='finished' && now-room.touched>10*60_000)) {clearInterval(room.tick);clearTimeout(room.countdown);room.grace.forEach(timer=>{if(timer)clearTimeout(timer)});io.to(code).emit('notice','Room expired due to inactivity.');rooms.delete(code);}
   for(const [key,val] of lastCall) if(now-val.t>60_000)lastCall.delete(key);
 },60_000).unref();
 http.listen(PORT,'0.0.0.0',()=>console.log(`Wrong Way server listening on ${PORT}`));
