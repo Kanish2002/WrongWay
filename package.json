@@ -1,0 +1,5 @@
+{
+  "name": "wrong-way", "version": "1.0.0", "private": true, "type": "module", "workspaces": ["packages/*", "apps/*"],
+  "scripts": {"dev": "concurrently -n SERVER,WEB -c cyan,magenta \"npm run dev -w @wrongway/server\" \"npm run dev -w @wrongway/web\"", "build": "npm run build -w @wrongway/rules && npm run build -w @wrongway/server && npm run build -w @wrongway/web", "test": "vitest run", "test:engine":"npm run build -w @wrongway/rules && node --test packages/rules/src/engine.node.mjs", "typecheck": "tsc -b"},
+  "devDependencies": {"concurrently": "^9.1.2", "typescript": "^5.7.3", "vitest": "^3.0.8", "@types/node": "^22.13.10"}
+}

@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { initialGame, legalMoves, applyAction, canPlaceWall, openEdge, shortestPath } from '../dist/index.js';
+test('exactly two players, correct setup',()=>{ const s=initialGame();assert.deepEqual(s.players.map(x=>x.walls),[10,10]);assert.throws(()=>initialGame(['A','B','C','D']));});
+test('initial legal moves and turns',()=>{const s=initialGame();assert.equal(legalMoves(s).length,3);const b=applyAction(s,{type:'move',to:{r:7,c:4}});assert.equal(b.turn,1);assert.equal(s.players[0].pawn.r,8);});
+test('jump straight without walls',()=>{const s=initialGame();s.players[0].pawn={r:4,c:4};s.players[1].pawn={r:3,c:4};assert(legalMoves(s).some(p=>p.r===2&&p.c===4));});
+test('jump diagonally when behind opponent blocked',()=>{const s=initialGame();s.players[0].pawn={r:4,c:4};s.players[1].pawn={r:3,c:4};s.walls.push({r:2,c:4,orientation:'h'});const m=legalMoves(s);assert(m.some(p=>p.r===3&&p.c===3));assert(m.some(p=>p.r===3&&p.c===5));assert(!m.some(p=>p.r===2&&p.c===4));});
+test('diagonal at edge respects side walls',()=>{const s=initialGame();s.players[0].pawn={r:1,c:4};s.players[1].pawn={r:0,c:4};s.walls=[{r:0,c:4,orientation:'v'}];assert(legalMoves(s).some(p=>p.r===0&&p.c===3));assert(!legalMoves(s).some(p=>p.r===0&&p.c===5));});
+test('wall crossing, overlap and same-line end to end',()=>{const s=initialGame();s.walls=[{r:3,c:3,orientation:'h'}];assert(!canPlaceWall(s,{r:3,c:3,orientation:'v'}));assert(!canPlaceWall(s,{r:3,c:4,orientation:'h'}));assert(canPlaceWall(s,{r:3,c:5,orientation:'h'}));});
+test('walls block edges and never mutate illegal state',()=>{const s=initialGame();s.walls=[{r:7,c:4,orientation:'h'}];assert(!openEdge({r:8,c:4},{r:7,c:4},s.walls));assert.throws(()=>applyAction(s,{type:'move',to:{r:7,c:4}}));assert.equal(s.history.length,0);});
+test('both players must retain path to goal',()=>{const s=initialGame();s.players[0].pawn={r:4,c:4};s.players[1].pawn={r:3,c:4};assert(shortestPath(s,0));assert(shortestPath(s,1));const b=applyAction(s,{type:'wall',wall:{r:3,c:3,orientation:'h'}});assert(shortestPath(b,0));assert(shortestPath(b,1));});
+test('winning on opposite row',()=>{const s=initialGame();s.players[0].pawn={r:1,c:4};s.players[1].pawn={r:0,c:5};const b=applyAction(s,{type:'move',to:{r:0,c:4}});assert.equal(b.winner,'p1');assert.throws(()=>applyAction(b,{type:'move',to:{r:1,c:4}}));});
